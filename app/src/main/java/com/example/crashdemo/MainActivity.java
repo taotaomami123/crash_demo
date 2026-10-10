@@ -47,7 +47,7 @@ public class MainActivity extends AppCompatActivity {
         });
 
         binding.btnNativeCrash.setOnClickListener(v -> {
-            Toast.makeText(this, "触发堆缓冲区溢出 Native Crash，请查看 tombstone", Toast.LENGTH_SHORT).show();
+            Toast.makeText(this, "触发堆越界写 Native Crash，请查看 tombstone", Toast.LENGTH_SHORT).show();
             triggerNativeCrash();
         });
     }
@@ -64,8 +64,9 @@ public class MainActivity extends AppCompatActivity {
     public native void startFdLeakAndCrash();
 
     /**
-     * 触发堆缓冲区溢出 Native Crash：崩溃堆栈无意义，需从 tombstone 的
-     * Abort message / heap 区域（被 'A' 填充的 chunk header）反推根因。
+     * 触发堆越界写 Native Crash：崩溃堆栈停在 Use() 解引用处、看不出原因，
+     * 需从 tombstone 的 fault addr（= 0x4141...）与堆内存的 'A' 填充反推是
+     * 越界写覆盖了紧随 buf 之后的 data 指针字段。
      */
     public native void triggerNativeCrash();
 

@@ -180,19 +180,21 @@ Java_com_example_crashdemo_MainActivity_startFdLeakAndCrash(
 }
 
 // ======================================================================
-// Native Crash：堆缓冲区溢出，覆盖对象指针字段（heap buffer overflow）
+// Native Crash：堆缓冲区越界写覆盖相邻指针字段（heap buffer overflow）
 //
-// 崩溃点：UseNode 中解引用被 'A' 覆盖的指针字段 n->data -> SIGSEGV。
-// 仅从 backtrace 无法看出根因：堆栈停在 UseNode 的一次"看似正常"的
-// 指针解引用处，看不出 n->data 为什么变成了 0x4141414141414141。
+// 崩溃点：Use() 解引用一个被 'A' 覆盖成野指针的字段 n->data -> SIGSEGV。
+// 单从 backtrace 无法看出根因：
+//   - 崩溃栈只有 Use() -> triggerNativeCrash()，真正肇事的 Overflow()
+//     早已执行完毕、不在栈上；
+//   - Use() 的代码只是"解引用一个指针"，n->data 的赋值 a->data = b
+//     在调用方也是正常写法，看不出 data 为什么变成了非法值。
 //
-// 但结合 tombstone 可以定位根因：
+// 结合 tombstone 才能定位根因：
 //   1. fault addr = 0x4141414141414141（即 'AAAA'），说明解引用的是个被
-//      0x41 填充的"假指针"
-//   2. tombstone 的 "memory near" 区域显示对象 a 的堆内存被 'A'(0x41)
-//      填充，其中紧随 buf 之后的 data 指针字段被覆盖
-// 由此可以判断：对象 a 的 buf 字段被越界写入，'A'(0x41) 覆盖了紧随其后的
-// data 指针字段，导致后续解引用 data 时跳转到非法地址 0x41414141...。
+//      0x41 填充的"假指针"；
+//   2. "memory near" 区域显示对象 a 的堆内存被 'A'(0x41) 填充，
+//      其中紧随 buf 之后的 data 指针字段被覆盖。
+// 由此反推：对象 a 的 buf 字段被越界写入，覆盖了紧随其后的 data 指针字段。
 // ======================================================================
 
 struct Node {
@@ -200,38 +202,34 @@ struct Node {
     void* data;  // 指针字段，紧跟在 buf 之后
 };
 
+// 越界写：buf 只有 16 字节，却写 24 字节，覆盖紧随其后的 data 指针字段
 __attribute__((noinline))
-static void UseNode(Node* n) {
-    // 模拟正常业务逻辑：读取 data 指向的内容
-    volatile char x = *(volatile char*)n->data;
-    (void)x;
-}
-
-__attribute__((noinline))
-static void TriggerHeapOverflow() {
-    Node* a = (Node*)malloc(sizeof(Node));
-    Node* b = (Node*)malloc(sizeof(Node));
-    if (a == nullptr || b == nullptr) {
-        return;
-    }
-    a->data = b;  // data 原本指向一个合法对象 b
-
-    // 越界写：a->buf 只有 16 字节，却写入 24 字节，覆盖紧随其后的 data 指针字段。
-    // 用 volatile 指针访问，避免编译器优化掉越界写。
-    volatile char* p = a->buf;
+static void Overflow(Node* n) {
+    volatile char* p = n->buf;
     for (int i = 0; i < 24; ++i) {
         p[i] = 'A';
     }
+}
 
-    // 使用 a->data（已被覆盖为 0x4141414141414141）-> SIGSEGV
-    UseNode(a);
+// 正常业务逻辑：解引用 data 指针（此时已被覆盖为 0x4141414141414141）
+__attribute__((noinline))
+static void Use(Node* n) {
+    volatile char x = *(volatile char*)n->data;
+    (void)x;
 }
 
 extern "C" JNIEXPORT void JNICALL
 Java_com_example_crashdemo_MainActivity_triggerNativeCrash(
         JNIEnv* /* env */,
         jobject /* this */) {
-    TriggerHeapOverflow();
-    // 正常情况不会执行到这里（UseNode 解引用时已经崩溃）
-    __android_log_print(ANDROID_LOG_INFO, LOG_TAG, "should not reach here");
+    Node* a = (Node*)malloc(sizeof(Node));
+    Node* b = (Node*)malloc(sizeof(Node));
+    if (a == nullptr || b == nullptr) {
+        return;
+    }
+    a->data = b;   // data 原本指向合法对象 b（正常赋值）
+
+    Overflow(a);   // 越界写覆盖 a->data，此函数返回后不在崩溃栈上
+
+    Use(a);        // 崩溃：解引用被覆盖的 a->data -> SIGSEGV
 }
