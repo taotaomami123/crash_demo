@@ -70,9 +70,25 @@ void* LooperThreadRoutine(void*) {
 void* FinalCrashThreadRoutine(void*) {
     int epfd = epoll_create(1);
     if (epfd < 0) {
-        __android_log_print(ANDROID_LOG_FATAL, LOG_TAG,
-                            "[fd-leak] new thread init failed: epoll_create errno=%d (%s), current fd=%d",
-                            errno, strerror(errno), CountOpenFds());
+        // 方案一：崩溃上报前主动释放少量已泄漏的 fd，给 Bugly 等崩溃 SDK
+        // 留出采集余量（opendir("/proc/self/fd")、socket、写文件等都需要新 fd）。
+        // 泄漏了数百个 fd 时，释放 8 个对"fd 泄漏"的结论毫无影响，却能保证
+        // Bugly 在 signal handler 中能正常 opendir 并读取 /proc/self/fd 列表。
+        constexpr int kReleaseFdCount = 8;
+        int released = 0;
+        while (released < kReleaseFdCount && !g_leaked_fds.empty()) {
+            int fd = g_leaked_fds.back();
+            g_leaked_fds.pop_back();
+            if (fd >= 0) {
+                close(fd);
+                ++released;
+            }
+        }
+
+//        __android_log_print(ANDROID_LOG_FATAL, LOG_TAG,
+//                            "[fd-leak] new thread init failed: epoll_create errno=%d (%s), "
+//                            "released=%d fd for crash reporting, current fd=%d",
+//                            errno, strerror(errno), released, CountOpenFds());
         abort();
     }
     return nullptr;
