@@ -31,7 +31,11 @@ public class MainActivity extends AppCompatActivity {
     protected void onCreate(Bundle savedInstanceState) {
         super.onCreate(savedInstanceState);
 
+        // 初始化bugly，如果要验证其他crash监控工具，可以注释掉initBugly语句，
+        // 同时反注释initOther语句，并且在initOther()方法中替换成其他监控工具的初始化代码
         initBugly(this.getApplicationContext());
+
+        // initOther(this.getApplicationContext());
 
         binding = ActivityMainBinding.inflate(getLayoutInflater());
         setContentView(binding.getRoot());
@@ -116,6 +120,9 @@ public class MainActivity extends AppCompatActivity {
         mainHandler.postAtFrontOfQueue(floodMessage);
     }
 
+    private void initOther(Context context) {
+
+    }
 
     private void initBugly(Context context) {
         // 1. 初始化参数预构建，必需设置初始化参数
